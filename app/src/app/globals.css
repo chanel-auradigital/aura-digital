@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+:root {
+  --aura-espresso: #2A1F1A;
+  --aura-clay: #8A7665;
+  --aura-terra: #C07A5A;
+  --aura-sand: #EFEBE3;
+  --aura-cloud: #F7F3EE;
+}
+
+@theme inline {
+  --color-espresso: var(--aura-espresso);
+  --color-clay: var(--aura-clay);
+  --color-terra: var(--aura-terra);
+  --color-sand: var(--aura-sand);
+  --color-cloud: var(--aura-cloud);
+  --font-heading: var(--font-lora);
+  --font-body: var(--font-josefin);
+}
+
+body {
+  background-color: var(--aura-cloud);
+  color: var(--aura-espresso);
+  font-family: var(--font-body), sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading), serif;
+}

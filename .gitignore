@@ -1,0 +1,37 @@
+# Secrets
+.env
+*.env.local
+.env.local
+assets/canva/recovery-codes.txt
+
+# Cookies y sesiones
+cookies.txt
+**/cookies.txt
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Next.js
+.next/
+app/.next/
+app/node_modules/
+
+# Vercel
+.vercel/
+app/.vercel/
+
+# Claude local settings (contiene permisos con tokens)
+.claude/settings.local.json
