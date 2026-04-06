@@ -9,26 +9,21 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        client: [chanel-de-la-rosa, maria-jose, guadalupe-acero]
-      max-parallel: 1  # One at a time to avoid rate limits
 
     steps:
-      - name: Sync ${{ matrix.client }}
+      - name: Sync all clients
         run: |
           response=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://ixjeoplobqqckqhxisoo.supabase.co/functions/v1/sync-instagram?client=${{ matrix.client }}" \
+            "https://ixjeoplobqqckqhxisoo.supabase.co/functions/v1/sync-instagram?client=all" \
             -H "Authorization: Bearer ${{ secrets.SYNC_SECRET }}")
 
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
 
-          echo "Client: ${{ matrix.client }}"
           echo "Status: $http_code"
           echo "$body" | jq . 2>/dev/null || echo "$body"
 
           if [ "$http_code" != "200" ]; then
-            echo "::error::Sync failed for ${{ matrix.client }} (HTTP $http_code)"
+            echo "::error::Sync failed (HTTP $http_code)"
             exit 1
           fi

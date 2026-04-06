@@ -4,21 +4,6 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const GRAPH_URL = "https://graph.instagram.com/v22.0";
 
-const CLIENTS: Record<string, { ig_account_id: string; token_env: string }> = {
-  "chanel-de-la-rosa": {
-    ig_account_id: "26061463690190519",
-    token_env: "META_ACCESS_TOKEN_CHANEL_DE_LA_ROSA",
-  },
-  "maria-jose": {
-    ig_account_id: "26686366784320409",
-    token_env: "META_ACCESS_TOKEN_MARIA_JOSE",
-  },
-  "guadalupe-acero": {
-    ig_account_id: "26806995438892448",
-    token_env: "META_ACCESS_TOKEN_GUADALUPE_ACERO",
-  },
-};
-
 async function igFetch(url: string) {
   try {
     const resp = await fetch(url);
@@ -56,7 +41,6 @@ async function fetchComments(mediaId: string, token: string) {
   if (data?.data) {
     for (const c of data.data) {
       comments.push({ ...c, is_reply: false, parent_ig_id: null });
-      // Replies
       const replies = await igFetch(
         `${GRAPH_URL}/${c.id}/replies?fields=id,text,timestamp,username,like_count&limit=50&access_token=${token}`
       );
@@ -78,7 +62,9 @@ Deno.serve(async (req) => {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Get client slug from body or query
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // Get client slug from query or body
   const url = new URL(req.url);
   let slug = url.searchParams.get("client");
   if (!slug && req.method === "POST") {
@@ -88,41 +74,105 @@ Deno.serve(async (req) => {
     } catch { /* empty body is ok */ }
   }
 
-  if (!slug || !CLIENTS[slug]) {
-    return Response.json({
-      error: "Provide ?client=slug",
-      available: Object.keys(CLIENTS),
-    }, { status: 400 });
+  // If "all", sync every client with an Instagram connection
+  const syncAll = slug === "all" || !slug;
+
+  let clientsToSync: { id: string; slug: string; ig_account_id: string; token: string }[] = [];
+
+  if (syncAll) {
+    // Get all clients with Instagram connections from DB
+    const { data: apps } = await supabase
+      .from("client_apps")
+      .select("client_id, app_account_id, metadata, clients(id, slug)")
+      .eq("app_name", "instagram");
+
+    for (const app of apps || []) {
+      const meta = app.metadata as { access_token?: string } | null;
+      const client = app.clients as unknown as { id: string; slug: string } | null;
+      const token = meta?.access_token || getEnvToken(client?.slug);
+      if (client && app.app_account_id && token) {
+        clientsToSync.push({
+          id: client.id,
+          slug: client.slug,
+          ig_account_id: app.app_account_id,
+          token,
+        });
+      }
+    }
+  } else {
+    // Single client
+    const { data: clientRow } = await supabase
+      .from("clients").select("id, slug").eq("slug", slug).single();
+    if (!clientRow) {
+      return Response.json({ error: `Client ${slug} not in DB` }, { status: 404 });
+    }
+
+    const { data: app } = await supabase
+      .from("client_apps")
+      .select("app_account_id, metadata")
+      .eq("client_id", clientRow.id)
+      .eq("app_name", "instagram")
+      .single();
+
+    if (!app) {
+      return Response.json({ error: `No Instagram connection for ${slug}` }, { status: 404 });
+    }
+
+    const meta = app.metadata as { access_token?: string } | null;
+    const token = meta?.access_token || getEnvToken(slug);
+    if (!token) {
+      return Response.json({ error: `No token for ${slug}` }, { status: 500 });
+    }
+
+    clientsToSync.push({
+      id: clientRow.id,
+      slug: clientRow.slug,
+      ig_account_id: app.app_account_id!,
+      token,
+    });
   }
 
-  const config = CLIENTS[slug];
-  const token = Deno.env.get(config.token_env);
-  if (!token) {
-    return Response.json({ error: `No token for ${slug}` }, { status: 500 });
+  if (clientsToSync.length === 0) {
+    return Response.json({ error: "No clients to sync" }, { status: 404 });
   }
 
-  console.log(`Syncing: ${slug}`);
+  const results = [];
+  for (const client of clientsToSync) {
+    const result = await syncClient(supabase, client);
+    results.push(result);
+  }
+
+  if (results.length === 1) {
+    return Response.json(results[0]);
+  }
+  return Response.json({ ok: true, clients: results });
+});
+
+// Fallback: read token from env vars (for backwards compatibility)
+function getEnvToken(slug: string | undefined): string | undefined {
+  if (!slug) return undefined;
+  const envKey = `META_ACCESS_TOKEN_${slug.toUpperCase().replace(/-/g, "_")}`;
+  return Deno.env.get(envKey);
+}
+
+async function syncClient(
+  supabase: ReturnType<typeof createClient>,
+  client: { id: string; slug: string; ig_account_id: string; token: string }
+) {
+  console.log(`Syncing: ${client.slug}`);
   const start = Date.now();
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-  // Get client_id
-  const { data: clientRow } = await supabase
-    .from("clients").select("id").eq("slug", slug).single();
-  if (!clientRow) {
-    return Response.json({ error: `Client ${slug} not in DB` }, { status: 404 });
-  }
-  const clientId = clientRow.id;
+  const { id: clientId, slug, ig_account_id, token } = client;
 
   // 1. Profile
   console.log("  Profile...");
   const profile = await igFetch(
-    `${GRAPH_URL}/${config.ig_account_id}?fields=id,username,name,biography,profile_picture_url,followers_count,follows_count,media_count,website&access_token=${token}`
+    `${GRAPH_URL}/${ig_account_id}?fields=id,username,name,biography,profile_picture_url,followers_count,follows_count,media_count,website,account_type&access_token=${token}`
   );
 
   if (profile) {
     await supabase.from("instagram_profiles").upsert({
       client_id: clientId,
-      ig_account_id: config.ig_account_id,
+      ig_account_id,
       username: profile.username,
       name: profile.name,
       biography: profile.biography,
@@ -131,6 +181,7 @@ Deno.serve(async (req) => {
       follows_count: profile.follows_count || 0,
       media_count: profile.media_count || 0,
       website: profile.website,
+      account_type: profile.account_type || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "client_id" });
 
@@ -148,7 +199,7 @@ Deno.serve(async (req) => {
   console.log("  Recent posts...");
   const fields = "id,media_type,media_url,thumbnail_url,permalink,caption,timestamp,like_count,comments_count";
   const mediaData = await igFetch(
-    `${GRAPH_URL}/${config.ig_account_id}/media?fields=${fields}&limit=50&access_token=${token}`
+    `${GRAPH_URL}/${ig_account_id}/media?fields=${fields}&limit=50&access_token=${token}`
   );
 
   let postsCount = 0;
@@ -219,5 +270,5 @@ Deno.serve(async (req) => {
   };
 
   console.log(`  Done in ${duration}s: ${postsCount} posts, ${commentsCount} comments`);
-  return Response.json(result);
-});
+  return result;
+}
