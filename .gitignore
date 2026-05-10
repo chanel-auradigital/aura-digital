@@ -3,6 +3,10 @@
 *.env.local
 .env.local
 assets/canva/recovery-codes.txt
+assets/chatgpt/credentials.txt
+assets/chatgpt/recovery-codes.txt
+assets/google-drive/drive_token.json
+assets/google-drive/client_secret_*.json
 
 # Cookies y sesiones
 cookies.txt
